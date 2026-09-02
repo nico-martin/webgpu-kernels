@@ -1,0 +1,2216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#030201">
+  <meta name="description" content="An interactive molten planet driven by Hugging Face WebGPU compute kernels.">
+  <title>Molten — WebGPU Kernel Study</title>
+
+  <!--
+    MOLTEN — a single-file WebGPU kernel study
+
+    No framework, bundler, image assets, or UI package is required. The only remote
+    JavaScript dependency is the exact pinned @huggingface/kernels release below;
+    individual kernels are then fetched from Hugging Face's webgpu-kernels org.
+
+    WebGPU requires a compatible browser and a secure context. For local development:
+      python -m http.server 8000
+      open http://localhost:8000
+  -->
+
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #fff7ee;
+      --muted: rgba(255, 235, 220, 0.48);
+      --line: rgba(255, 228, 207, 0.12);
+      --hot: #ff7438;
+      --hot-bright: #ff9b63;
+      --panel: rgba(13, 8, 5, 0.82);
+      --panel-border: rgba(255, 226, 204, 0.12);
+      --panel-highlight: rgba(255, 244, 235, 0.04);
+      --sans: Inter, "SF Pro Display", "Segoe UI", system-ui, sans-serif;
+      --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      min-width: 320px;
+      min-height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #030201;
+      color: var(--ink);
+      font-family: var(--sans);
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button,
+    input { font: inherit; }
+
+    button { -webkit-tap-highlight-color: transparent; }
+
+    .icon {
+      display: block;
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .icon-fill { fill: currentColor; stroke: none; }
+
+    .icon-sprite {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+    }
+
+    ::selection {
+      color: #170602;
+      background: #ff8c4b;
+    }
+
+    .molten-shell {
+      position: relative;
+      isolation: isolate;
+      width: 100vw;
+      height: 100svh;
+      min-height: 600px;
+      overflow: hidden;
+      background: #020100;
+    }
+
+    .molten-shell::before,
+    .molten-shell::after {
+      position: absolute;
+      z-index: 2;
+      pointer-events: none;
+      content: "";
+    }
+
+    .molten-shell::before {
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(0, 0, 0, 0.42), transparent 34%, transparent 69%, rgba(0, 0, 0, 0.24)),
+        linear-gradient(180deg, rgba(0, 0, 0, 0.25), transparent 22%, transparent 76%, rgba(0, 0, 0, 0.54));
+    }
+
+    .molten-shell::after {
+      inset: 18px;
+      border: 1px solid rgba(255, 228, 207, 0.07);
+      border-radius: 8px;
+      box-shadow: inset 0 0 70px rgba(255, 76, 14, 0.025);
+    }
+
+    .molten-canvas {
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      contain: strict;
+      cursor: crosshair;
+      outline: none;
+      touch-action: none;
+      user-select: none;
+    }
+
+    .molten-canvas:focus-visible {
+      box-shadow: inset 0 0 0 2px rgba(255, 117, 58, 0.72);
+    }
+
+    .molten-header {
+      position: absolute;
+      z-index: 5;
+      top: 38px;
+      right: 42px;
+      left: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      pointer-events: none;
+    }
+
+    .molten-brand {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+    }
+
+    .brand-sigil {
+      position: relative;
+      display: grid;
+      width: 42px;
+      height: 42px;
+      place-items: center;
+      color: #ff7130;
+      background: rgba(23, 10, 4, 0.56);
+      border: 1px solid rgba(255, 137, 75, 0.28);
+      border-radius: 50%;
+      box-shadow: inset 0 0 18px rgba(255, 74, 13, 0.08), 0 0 28px rgba(255, 74, 13, 0.08);
+    }
+
+    .brand-sigil::after {
+      position: absolute;
+      inset: -5px;
+      border: 1px solid rgba(255, 137, 75, 0.08);
+      border-radius: inherit;
+      content: "";
+    }
+
+    .brand-sigil .icon {
+      width: 19px;
+      height: 19px;
+      stroke-width: 1.65;
+      filter: drop-shadow(0 0 6px rgba(255, 77, 18, 0.58));
+    }
+
+    .molten-brand > div { display: grid; gap: 2px; }
+
+    .eyebrow,
+    .panel-kicker,
+    .molten-title-block p {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      line-height: 1.4;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    .molten-brand .eyebrow { color: rgba(255, 233, 217, 0.47); }
+
+    .molten-brand strong {
+      font-size: 1rem;
+      font-weight: 680;
+      line-height: 1.2;
+      letter-spacing: 0.18em;
+    }
+
+    .runtime-pill {
+      display: flex;
+      min-height: 40px;
+      align-items: center;
+      gap: 9px;
+      padding: 0 14px;
+      color: rgba(255, 240, 228, 0.68);
+      background: rgba(10, 6, 4, 0.68);
+      border: 1px solid rgba(255, 228, 207, 0.1);
+      border-radius: 999px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.24);
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      letter-spacing: 0.025em;
+    }
+
+    .runtime-icon {
+      width: 14px;
+      height: 14px;
+      color: rgba(255, 235, 219, 0.42);
+      stroke-width: 1.7;
+    }
+
+    .runtime-pill output {
+      color: rgba(255, 245, 237, 0.82);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .runtime-light,
+    .status-dot {
+      display: inline-block;
+      flex: 0 0 auto;
+      width: 6px;
+      height: 6px;
+      background: #ff9c5e;
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(255, 108, 43, 0.7);
+    }
+
+    .runtime-gpu .runtime-light,
+    .status-gpu {
+      background: #8cf2b9;
+      box-shadow: 0 0 11px rgba(99, 239, 158, 0.74);
+    }
+
+    .runtime-loading .runtime-light,
+    .runtime-checking .runtime-light { animation: runtime-pulse 1.25s ease-in-out infinite; }
+
+    .runtime-separator {
+      width: 1px;
+      height: 14px;
+      margin: 0 2px;
+      background: rgba(255, 235, 219, 0.13);
+    }
+
+    .molten-title-block {
+      position: absolute;
+      z-index: 3;
+      top: 23%;
+      left: clamp(32px, 5.2vw, 84px);
+      display: grid;
+      width: min(410px, 29vw);
+      pointer-events: none;
+    }
+
+    .molten-title-block p {
+      margin: 0 0 9px;
+      color: #ff8246;
+    }
+
+    .molten-title-block h1 {
+      margin: 0;
+      color: #fff8f2;
+      font-size: clamp(5rem, 8.3vw, 9.5rem);
+      font-weight: 760;
+      line-height: 0.8;
+      letter-spacing: -0.065em;
+      text-shadow: 0 2px 0 rgba(255, 255, 255, 0.08), 0 22px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    .molten-title-block > span {
+      width: min(340px, 100%);
+      margin-top: 23px;
+      color: rgba(255, 237, 224, 0.54);
+      font-size: 0.92rem;
+      line-height: 1.65;
+    }
+
+    .interaction-callout {
+      position: absolute;
+      z-index: 4;
+      bottom: 42px;
+      left: 42px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      pointer-events: none;
+      opacity: 0.75;
+    }
+
+    .interaction-callout > div { display: grid; gap: 2px; text-shadow: 0 2px 14px #000; }
+    .interaction-callout strong { font-size: 0.78rem; font-weight: 620; letter-spacing: 0.035em; }
+    .interaction-callout div span { color: rgba(255, 233, 217, 0.52); font-size: 0.72rem; }
+
+    .interaction-orbit {
+      position: relative;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid rgba(255, 135, 70, 0.28);
+      border-radius: 50%;
+      box-shadow: 0 0 24px rgba(255, 80, 18, 0.1);
+    }
+
+    .interaction-orbit::before,
+    .interaction-orbit::after {
+      position: absolute;
+      border: 1px solid rgba(255, 135, 70, 0.12);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .interaction-orbit::before { inset: 5px; }
+    .interaction-orbit::after { inset: -5px; }
+
+    .interaction-orbit > span {
+      width: 4px;
+      height: 4px;
+      background: #ff8b4c;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #ff6727;
+      animation: interaction-pulse 1.8s ease-in-out infinite;
+    }
+
+    .control-panel-heading,
+    .control-panel-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .molten-controls {
+      position: absolute;
+      z-index: 7;
+      right: 42px;
+      bottom: 40px;
+      width: 430px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(255, 91, 28, 0.055), transparent 36%),
+        linear-gradient(145deg, rgba(27, 15, 9, 0.92), rgba(9, 6, 4, 0.88));
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      box-shadow: 0 30px 90px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(255, 241, 231, 0.045);
+      transition: width 220ms ease, box-shadow 220ms ease;
+    }
+
+    .molten-controls.is-collapsed {
+      width: 390px;
+      box-shadow: 0 20px 56px rgba(0, 0, 0, 0.38), inset 0 1px 0 var(--panel-highlight);
+    }
+
+    .control-panel-heading {
+      min-height: 68px;
+      padding: 12px 14px 11px 19px;
+      border-bottom: 1px solid rgba(255, 226, 204, 0.085);
+      transition: border-color 180ms ease;
+    }
+
+    .molten-controls.is-collapsed .control-panel-heading { border-bottom-color: transparent; }
+
+    .control-panel-heading > div:first-child { display: grid; gap: 1px; }
+    .panel-kicker { color: rgba(255, 230, 212, 0.38); font-size: 0.63rem; }
+    .control-panel-heading strong { font-size: 0.94rem; font-weight: 610; letter-spacing: -0.012em; }
+    .transport-buttons {
+      display: flex;
+      gap: 1px;
+      padding: 3px;
+      background: rgba(255, 236, 220, 0.028);
+      border: 1px solid rgba(255, 226, 204, 0.075);
+      border-radius: 10px;
+    }
+
+    .transport-button {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      place-items: center;
+      color: rgba(255, 239, 226, 0.58);
+      background: transparent;
+      border: 0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: color 160ms ease, background 160ms ease;
+    }
+
+    .transport-button:hover { color: #fff7f0; background: rgba(255, 114, 51, 0.1); }
+    .transport-button:focus-visible { color: #fff; outline: 2px solid rgba(255, 116, 56, 0.55); outline-offset: 1px; }
+    .transport-button .icon { width: 15px; height: 15px; stroke-width: 1.75; }
+    .transport-button [hidden] { display: none; }
+
+    .transport-separator {
+      width: 1px;
+      height: 18px;
+      align-self: center;
+      margin: 0 2px;
+      background: rgba(255, 226, 204, 0.09);
+    }
+
+    .settings-button { color: rgba(255, 148, 95, 0.72); }
+
+    .control-panel-body {
+      display: grid;
+      grid-template-rows: 1fr;
+      opacity: 1;
+      transition: grid-template-rows 220ms ease, opacity 160ms ease;
+    }
+
+    .control-panel-body-inner {
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .molten-controls.is-collapsed .control-panel-body {
+      grid-template-rows: 0fr;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .control-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px 24px;
+      padding: 20px 19px 21px;
+    }
+
+    .molten-control { display: grid; min-width: 0; gap: 9px; }
+    .molten-control > span { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: rgba(255, 239, 226, 0.69); font-size: 0.78rem; }
+    .molten-control output { color: rgba(255, 229, 210, 0.37); font-family: var(--mono); font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+
+    .molten-control input[type="range"] {
+      --fill: 50%;
+      width: 100%;
+      height: 13px;
+      margin: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .molten-control input[type="range"]::-webkit-slider-runnable-track {
+      height: 3px;
+      background: linear-gradient(90deg, #ad2b0b 0, #ff7b3c var(--fill), rgba(255, 229, 210, 0.1) var(--fill));
+      border-radius: 999px;
+      box-shadow: 0 0 10px rgba(255, 76, 20, 0.13);
+    }
+
+    .molten-control input[type="range"]::-webkit-slider-thumb {
+      width: 13px;
+      height: 13px;
+      margin-top: -5px;
+      appearance: none;
+      -webkit-appearance: none;
+      background: #f9e7da;
+      border: 2px solid #ff793c;
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(255, 91, 28, 0.08), 0 2px 8px rgba(0, 0, 0, 0.5);
+    }
+
+    .molten-control input[type="range"]::-moz-range-track { height: 3px; background: rgba(255, 229, 210, 0.1); border-radius: 999px; }
+    .molten-control input[type="range"]::-moz-range-progress { height: 3px; background: linear-gradient(90deg, #ad2b0b, #ff7b3c); border-radius: 999px; }
+    .molten-control input[type="range"]::-moz-range-thumb { width: 10px; height: 10px; background: #f9e7da; border: 2px solid #ff793c; border-radius: 50%; }
+    .molten-control input[type="range"]:focus-visible { outline: 2px solid rgba(255, 116, 56, 0.55); outline-offset: 4px; border-radius: 999px; }
+
+    .control-panel-footer {
+      min-height: 45px;
+      padding: 0 19px;
+      color: rgba(255, 231, 214, 0.37);
+      border-top: 1px solid rgba(255, 226, 204, 0.075);
+      font-family: var(--mono);
+      font-size: 0.64rem;
+    }
+
+    .control-panel-footer > span,
+    .control-panel-footer a { display: flex; align-items: center; gap: 7px; }
+    .control-panel-footer a { color: rgba(255, 232, 216, 0.46); text-decoration: none; transition: color 160ms ease; }
+    .control-panel-footer a:hover { color: #ff9a64; }
+    .control-panel-footer a:focus-visible { color: #fff; outline: 2px solid rgba(255, 116, 56, 0.55); outline-offset: 4px; }
+    .control-panel-footer a .icon { width: 11px; height: 11px; stroke-width: 1.8; }
+
+    .fatal-message {
+      position: absolute;
+      z-index: 20;
+      top: 50%;
+      left: 50%;
+      width: min(440px, calc(100vw - 40px));
+      padding: 24px;
+      color: rgba(255, 240, 228, 0.78);
+      background: rgba(17, 9, 5, 0.94);
+      border: 1px solid rgba(255, 120, 58, 0.28);
+      border-radius: 14px;
+      box-shadow: 0 28px 90px #000;
+      transform: translate(-50%, -50%);
+    }
+
+    .fatal-message[hidden] { display: none; }
+    .fatal-message strong { display: block; margin-bottom: 8px; color: #fff5ed; }
+    .fatal-message p { margin: 0; color: var(--muted); font-size: 0.85rem; line-height: 1.6; }
+
+    @keyframes runtime-pulse {
+      0%, 100% { opacity: 0.4; transform: scale(0.8); }
+      50% { opacity: 1; transform: scale(1.18); }
+    }
+
+    @keyframes interaction-pulse {
+      0%, 100% { box-shadow: 0 0 7px #ff6727; transform: scale(0.8); }
+      50% { box-shadow: 0 0 18px #ff6727; transform: scale(1.25); }
+    }
+
+    @media (max-width: 1180px) {
+      .molten-title-block { top: 21%; width: 310px; }
+      .molten-title-block h1 { font-size: clamp(4.5rem, 8vw, 7rem); }
+    }
+
+    @media (max-width: 900px) {
+      .molten-shell { min-height: 640px; }
+      .molten-shell::after { inset: 8px; }
+      .molten-header { top: 22px; right: 20px; left: 20px; }
+      .molten-brand .eyebrow,
+      .runtime-label,
+      .runtime-pill output:last-child,
+      .runtime-separator { display: none; }
+      .runtime-pill { min-height: 37px; padding: 0 12px; }
+      .molten-title-block { top: 15%; left: 22px; width: 270px; }
+      .molten-title-block h1 { font-size: clamp(4.1rem, 15vw, 6rem); }
+      .molten-title-block > span,
+      .interaction-callout { display: none; }
+      .molten-controls { right: 14px; bottom: 14px; left: 14px; width: auto; }
+      .molten-controls.is-collapsed { width: auto; }
+      .control-grid { gap: 16px 24px; padding-block: 17px 18px; }
+    }
+
+    @media (max-width: 560px) {
+      .molten-header { top: 17px; right: 14px; left: 14px; }
+      .brand-sigil { width: 36px; height: 36px; }
+      .molten-brand strong { font-size: 0.85rem; }
+      .runtime-icon { display: none; }
+      .runtime-pill output { display: none; }
+      .runtime-pill { min-width: 38px; justify-content: center; padding: 0; }
+      .molten-title-block { top: 12%; left: 17px; }
+      .molten-title-block h1 { font-size: 3.85rem; }
+      .control-panel-heading { min-height: 60px; padding: 9px 10px 8px 15px; }
+      .transport-button { width: 31px; height: 31px; }
+      .control-grid { gap: 14px 18px; padding: 16px 15px 17px; }
+      .molten-control > span { font-size: 0.72rem; }
+      .control-panel-footer { min-height: 40px; justify-content: flex-end; padding-inline: 15px; }
+      .control-panel-footer > span { display: none; }
+    }
+
+    @media (max-height: 720px) and (min-width: 901px) {
+      .molten-header { top: 24px; }
+      .molten-title-block { top: 19%; }
+      .interaction-callout { bottom: 26px; }
+      .molten-title-block > span,
+      .control-panel-footer { display: none; }
+      .molten-controls { bottom: 24px; }
+      .control-grid { gap: 15px 20px; padding-block: 16px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- One coherent, font-independent icon set. -->
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-flame" viewBox="0 0 24 24">
+      <path d="M12 22c5 0 8-4 8-8 0-3.5-2-6.5-4-8.5-.5 2.5-2 4.5-4 5.5 0-3-1.5-7-4-9C7.5 5.5 4 9 4 14c0 4 3 8 8 8Z"/>
+      <path d="M8.5 19c0-2 1-3.5 3-5 0 2.5 1.5 4 3 5"/>
+    </symbol>
+    <symbol id="icon-cpu" viewBox="0 0 24 24">
+      <rect width="14" height="14" x="5" y="5" rx="2"/>
+      <rect width="6" height="6" x="9" y="9" rx="1"/>
+      <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>
+    </symbol>
+    <symbol id="icon-chevron-down" viewBox="0 0 24 24">
+      <path d="m6 9 6 6 6-6"/>
+    </symbol>
+    <symbol id="icon-chevron-up" viewBox="0 0 24 24">
+      <path d="m18 15-6-6-6 6"/>
+    </symbol>
+    <symbol id="icon-pause" viewBox="0 0 24 24">
+      <rect width="4" height="14" x="6" y="5" rx="1"/>
+      <rect width="4" height="14" x="14" y="5" rx="1"/>
+    </symbol>
+    <symbol id="icon-play" viewBox="0 0 24 24">
+      <path d="m7 4 13 8-13 8V4Z" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24">
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
+      <path d="M3 3v5h5"/>
+    </symbol>
+    <symbol id="icon-sparkles" viewBox="0 0 24 24">
+      <path d="m12 3-1.3 3.7L7 8l3.7 1.3L12 13l1.3-3.7L17 8l-3.7-1.3L12 3Z"/>
+      <path d="m19 14-.8 2.2L16 17l2.2.8L19 20l.8-2.2L22 17l-2.2-.8L19 14ZM5 13l-.6 1.4L3 15l1.4.6L5 17l.6-1.4L7 15l-1.4-.6L5 13Z"/>
+    </symbol>
+    <symbol id="icon-maximize" viewBox="0 0 24 24">
+      <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/>
+    </symbol>
+    <symbol id="icon-minimize" viewBox="0 0 24 24">
+      <path d="M14 10 21 3M20 10h-6V4M3 21l7-7M4 14h6v6"/>
+    </symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24">
+      <path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+    </symbol>
+  </svg>
+
+  <main class="molten-shell" id="app">
+    <canvas
+      class="molten-canvas"
+      id="molten-canvas"
+      tabindex="0"
+      aria-label="Interactive molten planet. Drag across the surface to trigger eruptions. Press Space to pause."
+    ></canvas>
+
+    <header class="molten-header">
+      <div class="molten-brand">
+        <span class="brand-sigil" aria-hidden="true">
+          <svg class="icon"><use href="#icon-flame"></use></svg>
+        </span>
+        <div>
+          <span class="eyebrow">Hugging Face Kernel Study / 01</span>
+          <strong>MOLTEN</strong>
+        </div>
+      </div>
+
+      <div class="runtime-pill runtime-checking" id="runtime-pill" role="status" aria-live="polite">
+        <span class="runtime-light" aria-hidden="true"></span>
+        <svg class="icon runtime-icon" aria-hidden="true"><use href="#icon-cpu"></use></svg>
+        <span class="runtime-label" id="backend-label">Initializing</span>
+        <span class="runtime-separator" aria-hidden="true"></span>
+        <output id="fps-output">— FPS</output>
+        <output id="compute-output">warming</output>
+      </div>
+    </header>
+
+    <section class="molten-title-block" aria-labelledby="molten-title">
+      <p>Living planetary core</p>
+      <h1 id="molten-title">MOLTEN</h1>
+      <span>Heat is advected, diffused, cooled, and reignited through a persistent WebGPU tensor pipeline.</span>
+    </section>
+
+    <div class="interaction-callout" aria-hidden="true">
+      <span class="interaction-orbit"><span></span></span>
+      <div>
+        <strong>Touch the surface</strong>
+        <span>Drag across the planet to trigger eruptions</span>
+      </div>
+    </div>
+
+    <aside class="molten-controls is-collapsed" id="controls-panel" aria-label="Molten simulation controls">
+      <div class="control-panel-heading">
+        <div><span class="panel-kicker">Simulation</span><strong>Core dynamics</strong></div>
+        <div class="transport-buttons">
+          <button class="transport-button" id="pause-button" type="button" title="Pause simulation" aria-label="Pause simulation" aria-pressed="false">
+            <svg class="icon" data-icon="pause" aria-hidden="true"><use href="#icon-pause"></use></svg>
+            <svg class="icon" data-icon="play" aria-hidden="true" hidden><use href="#icon-play"></use></svg>
+          </button>
+          <button class="transport-button" id="reset-button" type="button" title="Reset simulation" aria-label="Reset simulation">
+            <svg class="icon" aria-hidden="true"><use href="#icon-refresh"></use></svg>
+          </button>
+          <button class="transport-button" id="random-button" type="button" title="Generate a new core" aria-label="Generate a new core">
+            <svg class="icon" aria-hidden="true"><use href="#icon-sparkles"></use></svg>
+          </button>
+          <button class="transport-button" id="fullscreen-button" type="button" title="Enter fullscreen" aria-label="Enter fullscreen">
+            <svg class="icon" data-icon="maximize" aria-hidden="true"><use href="#icon-maximize"></use></svg>
+            <svg class="icon" data-icon="minimize" aria-hidden="true" hidden><use href="#icon-minimize"></use></svg>
+          </button>
+          <span class="transport-separator" aria-hidden="true"></span>
+          <button
+            class="transport-button settings-button"
+            id="settings-button"
+            type="button"
+            title="Expand simulation settings"
+            aria-label="Expand simulation settings"
+            aria-controls="simulation-settings"
+            aria-expanded="false"
+          >
+            <svg class="icon" data-icon="expand-settings" aria-hidden="true"><use href="#icon-chevron-up"></use></svg>
+            <svg class="icon" data-icon="collapse-settings" aria-hidden="true" hidden><use href="#icon-chevron-down"></use></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="control-panel-body" id="simulation-settings" aria-hidden="true" inert>
+        <div class="control-panel-body-inner">
+          <div class="control-grid">
+            <label class="molten-control"><span><span>Turbulence</span><output for="turbulence">67</output></span><input id="turbulence" data-parameter="turbulence" type="range" min="0" max="1" step="0.01" value="0.67" style="--fill: 67%"></label>
+            <label class="molten-control"><span><span>Viscosity</span><output for="viscosity">58</output></span><input id="viscosity" data-parameter="viscosity" type="range" min="0" max="1" step="0.01" value="0.58" style="--fill: 58%"></label>
+            <label class="molten-control"><span><span>Eruption</span><output for="eruption">66</output></span><input id="eruption" data-parameter="eruption" type="range" min="0" max="1" step="0.01" value="0.66" style="--fill: 66%"></label>
+            <label class="molten-control"><span><span>Cooling</span><output for="cooling">44</output></span><input id="cooling" data-parameter="cooling" type="range" min="0" max="1" step="0.01" value="0.44" style="--fill: 44%"></label>
+            <label class="molten-control"><span><span>Crust</span><output for="crust">52</output></span><input id="crust" data-parameter="crust" type="range" min="0" max="1" step="0.01" value="0.52" style="--fill: 52%"></label>
+            <label class="molten-control"><span><span>Bloom</span><output for="bloom">72</output></span><input id="bloom" data-parameter="bloom" type="range" min="0" max="1" step="0.01" value="0.72" style="--fill: 72%"></label>
+          </div>
+
+          <div class="control-panel-footer">
+            <span><i class="status-dot" id="status-dot" aria-hidden="true"></i><span id="residency-label">GPU path activates automatically</span></span>
+            <a href="https://www.npmjs.com/package/@huggingface/kernels" target="_blank" rel="noreferrer">
+              <span>@huggingface/kernels</span>
+              <svg class="icon" aria-hidden="true"><use href="#icon-external"></use></svg>
+            </a>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="fatal-message" id="fatal-message" role="alert" hidden>
+      <strong>Renderer unavailable</strong>
+      <p id="fatal-copy">This demo needs WebGL 2. WebGPU is optional because a CPU simulation fallback is included.</p>
+    </div>
+  </main>
+
+  <noscript>This demo requires JavaScript.</noscript>
+
+  <script type="module">
+    /* -----------------------------------------------------------------------
+     * 1. Hugging Face kernel runtime
+     * -------------------------------------------------------------------- */
+
+    const KERNEL_PACKAGE_URL =
+      "https://cdn.jsdelivr.net/npm/@huggingface/kernels@0.0.1-preview.1/index.js";
+
+    let kernelModulePromise = null;
+    const kernelPromises = new Map();
+
+    function loadKernelModule() {
+      kernelModulePromise ??= import(KERNEL_PACKAGE_URL);
+      return kernelModulePromise;
+    }
+
+    async function loadKernel(operation) {
+      if (kernelPromises.has(operation)) return kernelPromises.get(operation);
+
+      const pending = loadKernelModule()
+        .then(({ getKernel }) =>
+          getKernel(`webgpu-kernels/ai.onnx.${operation}`, { version: 1 }),
+        )
+        .catch((error) => {
+          kernelPromises.delete(operation);
+          throw error;
+        });
+
+      kernelPromises.set(operation, pending);
+      return pending;
+    }
+
+    function supportsWebGpu() {
+      return "gpu" in navigator;
+    }
+
+    /**
+     * Owns every GPU tensor created during one update. A successful update
+     * detaches the six persistent workspace buffers; every temporary is cleaned
+     * up automatically, including error and device-loss paths.
+     */
+    class KernelScope {
+      #owned = new Set();
+
+      async gpu(operation, inputs, options = {}) {
+        const kernel = await loadKernel(operation);
+        const result = await kernel(inputs, { ...options, output: "gpu" });
+        for (const output of Object.values(result)) this.#owned.add(output);
+        return result;
+      }
+
+      async cpu(operation, inputs, options = {}) {
+        const kernel = await loadKernel(operation);
+        return kernel(inputs, { ...options, output: "cpu" });
+      }
+
+      detach(tensor) {
+        this.#owned.delete(tensor);
+        return tensor;
+      }
+
+      destroy() {
+        for (const tensor of this.#owned) destroyTensor(tensor);
+        this.#owned.clear();
+      }
+    }
+
+    async function withKernelScope(run) {
+      const scope = new KernelScope();
+      try {
+        return await run(scope);
+      } finally {
+        scope.destroy();
+      }
+    }
+
+    async function shutdownKernelRuntime() {
+      kernelPromises.clear();
+      if (!kernelModulePromise) return;
+
+      try {
+        const { disposeSharedKernelRuntime } = await kernelModulePromise;
+        await disposeSharedKernelRuntime();
+      } catch {
+        // A failed import or lost device has no live runtime left to release.
+      } finally {
+        kernelModulePromise = null;
+      }
+    }
+
+    function destroyTensor(tensor) {
+      if (!tensor || tensor.destroyed) return;
+      try {
+        tensor.destroy();
+      } catch {
+        // Device loss may already have invalidated the allocation.
+      }
+    }
+
+    function tensor(data, shape) {
+      return { data, shape };
+    }
+
+    function scalar(value) {
+      return tensor(new Float32Array([value]), []);
+    }
+
+    function gpuOutput(result, key) {
+      const output = result[key];
+      if (!output) throw new Error(`Kernel did not return GPU output ${key}`);
+      return output;
+    }
+
+    function cpuOutput(result, key) {
+      const output = result[key];
+      if (!output || !(output.data instanceof Float32Array)) {
+        throw new Error(`Kernel did not return float32 CPU output ${key}`);
+      }
+      return output.data;
+    }
+
+    /* -----------------------------------------------------------------------
+     * 2. Heat simulation
+     *
+     * State: 1 × 1 × 128 × 256 float32 tensor (128 KiB)
+     * Chain: GridSample → Conv → Mul → Add → Clip
+     * -------------------------------------------------------------------- */
+
+    const CONVOLUTION = new Float32Array([
+      0.025, 0.075, 0.025,
+      0.075, 0.600, 0.075,
+      0.025, 0.075, 0.025,
+    ]);
+
+    // Reuse immutable tensor descriptors and scalar storage to avoid per-tick GC.
+    const CONVOLUTION_TENSOR = tensor(CONVOLUTION, [1, 1, 3, 3]);
+    const ZERO_SCALAR = scalar(0);
+    const ONE_SCALAR = scalar(1);
+
+    function clamp(value, min = 0, max = 1) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function mulberry32(seed) {
+      let state = seed >>> 0;
+      return () => {
+        state += 0x6d2b79f5;
+        let value = state;
+        value = Math.imul(value ^ (value >>> 15), value | 1);
+        value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    class MoltenSimulation {
+      width = 256;
+      height = 128;
+
+      #field = new Float32Array(this.width * this.height);
+      #grid = new Float32Array(this.width * this.height * 2);
+      #source = new Float32Array(this.width * this.height);
+      #cpuWarped = new Float32Array(this.width * this.height);
+      #cpuDiffused = new Float32Array(this.width * this.height);
+      #cpuNext = new Float32Array(this.width * this.height);
+      #coolingScalar = scalar(1);
+      #workspace = null;
+      #impulses = [];
+      #seed = 0x7a11f00d;
+      #generation = 0;
+      #disposed = false;
+      #time = 0;
+
+      constructor() {
+        this.reset(this.#seed);
+      }
+
+      get field() { return this.#field; }
+      get time() { return this.#time; }
+
+      advance(deltaSeconds, speed) {
+        this.#time += Math.min(deltaSeconds, 0.05) * (0.35 + speed * 1.35);
+      }
+
+      reset(seed = this.#seed) {
+        this.#generation += 1;
+        this.#seed = seed >>> 0;
+        this.#time = 0;
+        this.#impulses.length = 0;
+        this.#disposeGpu();
+
+        const random = mulberry32(this.#seed);
+        for (let y = 0; y < this.height; y += 1) {
+          const v = y / this.height;
+          for (let x = 0; x < this.width; x += 1) {
+            const u = x / this.width;
+            const broad =
+              Math.sin(u * Math.PI * 6 + Math.sin(v * 7) * 1.4) * 0.12 +
+              Math.cos(v * Math.PI * 5 - u * 8) * 0.10;
+            const veins =
+              Math.sin((u + v) * Math.PI * 17) * 0.035 +
+              Math.sin((u * 1.8 - v) * Math.PI * 11) * 0.025;
+            this.#field[y * this.width + x] = clamp(
+              0.3 + broad + veins + (random() - 0.5) * 0.055,
+            );
+          }
+        }
+
+        this.#paint(this.#field, 0.20, 0.35, 0.58, 0.14);
+        this.#paint(this.#field, 0.66, 0.57, 0.48, 0.12);
+        this.#paint(this.#field, 0.84, 0.22, 0.32, 0.09);
+      }
+
+      randomize() {
+        this.reset((this.#seed + 0x9e3779b9) >>> 0);
+      }
+
+      inject(x, y, strength = 1, radius = 0.055) {
+        if (this.#disposed) return;
+        this.#impulses.push({
+          x: ((x % 1) + 1) % 1,
+          y: clamp(y),
+          strength: clamp(strength, 0.05, 2.5),
+          radius: clamp(radius, 0.018, 0.16),
+        });
+        if (this.#impulses.length > 24) {
+          this.#impulses.splice(0, this.#impulses.length - 24);
+        }
+      }
+
+      async stepGpu(parameters) {
+        const generation = this.#generation;
+        const impulses = this.#impulses.splice(0);
+        this.#makeWarpGrid(parameters);
+        this.#makeSource(parameters, impulses);
+
+        try {
+          await withKernelScope(async (scope) => {
+            const existing = this.#workspace;
+            let seedState = null;
+
+            // Upload only once. Subsequent iterations begin with the resident state.
+            if (!existing) {
+              const seeded = await scope.gpu("Clip", {
+                input: tensor(this.#field, [1, 1, this.height, this.width]),
+                min: ZERO_SCALAR,
+                max: ONE_SCALAR,
+              });
+              seedState = gpuOutput(seeded, "output");
+            }
+
+            const currentState = existing
+              ? existing.states[existing.current]
+              : seedState;
+
+            // 1. Advect: warp the previous state through a time-varying flow map.
+            const warpedResult = await scope.gpu(
+              "GridSample",
+              {
+                x: currentState,
+                grid: tensor(this.#grid, [1, this.height, this.width, 2]),
+              },
+              {
+                attrs: { mode: "linear", padding_mode: "border", align_corners: 0 },
+                ...(existing ? { outputs: { y: existing.warped } } : {}),
+              },
+            );
+            const warped = gpuOutput(warpedResult, "y");
+
+            // 2. Diffuse: a normalized 3 × 3 convolution spreads heat.
+            const diffusedResult = await scope.gpu(
+              "Conv",
+              {
+                x: warped,
+                w: CONVOLUTION_TENSOR,
+              },
+              {
+                attrs: { pads: [1, 1, 1, 1] },
+                ...(existing ? { outputs: { y: existing.diffused } } : {}),
+              },
+            );
+            const diffused = gpuOutput(diffusedResult, "y");
+
+            // 3. Cool: multiply the field by a user-controlled decay scalar.
+            const cooling = 0.987 + (1 - parameters.cooling) * 0.0122;
+            this.#coolingScalar.data[0] = cooling;
+            const cooledResult = await scope.gpu(
+              "Mul",
+              { a: diffused, b: this.#coolingScalar },
+              existing ? { outputs: { c: existing.cooled } } : {},
+            );
+            const cooled = gpuOutput(cooledResult, "c");
+
+            // 4. Ignite: add basal heating and pointer-driven eruption impulses.
+            const heatedResult = await scope.gpu(
+              "Add",
+              {
+                a: cooled,
+                b: tensor(this.#source, [1, 1, this.height, this.width]),
+              },
+              existing ? { outputs: { c: existing.heated } } : {},
+            );
+            const heated = gpuOutput(heatedResult, "c");
+
+            // 5. Bound: write directly into the unused ping-pong state buffer.
+            const nextIndex = existing ? 1 - existing.current : 1;
+            const nextDestination = existing?.states[nextIndex];
+            const boundedResult = await scope.gpu(
+              "Clip",
+              { input: heated, min: ZERO_SCALAR, max: ONE_SCALAR },
+              nextDestination ? { outputs: { output: nextDestination } } : {},
+            );
+            const bounded = gpuOutput(boundedResult, "output");
+
+            // One explicit visualization readback. The evolving state stays on GPU.
+            const readback = await scope.cpu("Clip", {
+              input: bounded,
+              min: ZERO_SCALAR,
+              max: ONE_SCALAR,
+            });
+
+            if (this.#disposed || generation !== this.#generation) return;
+
+            const states = existing
+              ? [existing.states[0], existing.states[1]]
+              : [seedState, bounded];
+            if (existing) states[nextIndex] = bounded;
+
+            for (const output of [seedState, warped, diffused, cooled, heated, bounded]) {
+              if (output) scope.detach(output);
+            }
+
+            this.#workspace = {
+              states,
+              current: nextIndex,
+              warped,
+              diffused,
+              cooled,
+              heated,
+            };
+            this.#field = cpuOutput(readback, "output");
+          });
+        } catch (error) {
+          if (!this.#disposed && generation === this.#generation) {
+            this.#impulses.unshift(...impulses);
+          }
+          this.#disposeGpu();
+          throw error;
+        }
+      }
+
+      /** Same visual model for browsers without WebGPU or after device loss. */
+      stepCpu(parameters) {
+        const impulses = this.#impulses.splice(0);
+        this.#makeWarpGrid(parameters);
+        this.#makeSource(parameters, impulses);
+
+        for (let i = 0; i < this.#field.length; i += 1) {
+          const gx = (this.#grid[i * 2] * 0.5 + 0.5) * (this.width - 1);
+          const gy = (this.#grid[i * 2 + 1] * 0.5 + 0.5) * (this.height - 1);
+          this.#cpuWarped[i] = this.#sample(gx, gy);
+        }
+
+        const cooling = 0.987 + (1 - parameters.cooling) * 0.0122;
+        for (let y = 0; y < this.height; y += 1) {
+          const ym = Math.max(0, y - 1);
+          const yp = Math.min(this.height - 1, y + 1);
+          for (let x = 0; x < this.width; x += 1) {
+            const xm = Math.max(0, x - 1);
+            const xp = Math.min(this.width - 1, x + 1);
+            const i = y * this.width + x;
+            this.#cpuDiffused[i] =
+              this.#cpuWarped[i] * 0.600 +
+              (
+                this.#cpuWarped[y * this.width + xm] +
+                this.#cpuWarped[y * this.width + xp] +
+                this.#cpuWarped[ym * this.width + x] +
+                this.#cpuWarped[yp * this.width + x]
+              ) * 0.075 +
+              (
+                this.#cpuWarped[ym * this.width + xm] +
+                this.#cpuWarped[ym * this.width + xp] +
+                this.#cpuWarped[yp * this.width + xm] +
+                this.#cpuWarped[yp * this.width + xp]
+              ) * 0.025;
+            this.#cpuNext[i] = clamp(
+              this.#cpuDiffused[i] * cooling + this.#source[i],
+            );
+          }
+        }
+
+        const previous = this.#field;
+        this.#field = this.#cpuNext;
+        this.#cpuNext = previous;
+      }
+
+      releaseGpu() {
+        this.#generation += 1;
+        this.#disposeGpu();
+      }
+
+      dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        this.#generation += 1;
+        this.#impulses.length = 0;
+        this.#disposeGpu();
+      }
+
+      #makeWarpGrid(parameters) {
+        const strength = 0.0015 + parameters.turbulence * 0.0085;
+        const viscosity = 1.3 - parameters.viscosity * 0.72;
+        const time = this.#time;
+
+        for (let y = 0; y < this.height; y += 1) {
+          const ny = ((y + 0.5) / this.height) * 2 - 1;
+          for (let x = 0; x < this.width; x += 1) {
+            const nx = ((x + 0.5) / this.width) * 2 - 1;
+            let vx = Math.sin(ny * 5 + time * 0.45) * strength * 0.34;
+            let vy = -strength * 0.18;
+
+            for (let vortex = 0; vortex < 3; vortex += 1) {
+              const phase = time * (0.11 + vortex * 0.025) + vortex * 2.094;
+              const cx = Math.cos(phase) * (0.46 - vortex * 0.07);
+              const cy = Math.sin(phase * 1.37) * 0.45;
+              const dx = nx - cx;
+              const dy = ny - cy;
+              const influence = Math.exp(-(dx * dx + dy * dy) * (2.8 + vortex));
+              const direction = vortex === 1 ? -1 : 1;
+              vx += -dy * influence * strength * viscosity * direction;
+              vy += dx * influence * strength * viscosity * direction;
+            }
+
+            const index = (y * this.width + x) * 2;
+            this.#grid[index] = clamp(nx - vx, -1, 1);
+            this.#grid[index + 1] = clamp(ny - vy, -1, 1);
+          }
+        }
+      }
+
+      #makeSource(parameters, impulses) {
+        const basal = 0.0003 + parameters.eruption * 0.00065;
+        this.#source.fill(basal);
+        const time = this.#time;
+
+        this.#paint(
+          this.#source,
+          0.5 + Math.sin(time * 0.17) * 0.26,
+          0.66 + Math.sin(time * 0.31) * 0.12,
+          0.003 + parameters.eruption * 0.007,
+          0.06,
+        );
+        this.#paint(
+          this.#source,
+          0.18 + Math.sin(time * 0.13 + 2) * 0.08,
+          0.28 + Math.cos(time * 0.21) * 0.10,
+          0.002 + parameters.eruption * 0.004,
+          0.045,
+        );
+
+        for (const impulse of impulses) {
+          this.#paint(
+            this.#source,
+            impulse.x,
+            impulse.y,
+            impulse.strength * (0.08 + parameters.eruption * 0.16),
+            impulse.radius,
+          );
+        }
+      }
+
+      /** Paint only the Gaussian's affected rectangle, wrapping longitude. */
+      #paint(target, centerX, centerY, amount, radius) {
+        const radiusX = Math.max(1, radius * this.width);
+        const radiusY = Math.max(1, radius * this.height * 1.45);
+        const extentX = Math.ceil(radiusX * 2.5);
+        const extentY = Math.ceil(radiusY * 2.5);
+        const centerPixelX = centerX * this.width;
+        const centerPixelY = centerY * this.height;
+        const minY = Math.max(0, Math.floor(centerPixelY - extentY));
+        const maxY = Math.min(this.height - 1, Math.ceil(centerPixelY + extentY));
+
+        for (let y = minY; y <= maxY; y += 1) {
+          const dy = (y - centerPixelY) / radiusY;
+          for (
+            let unwrappedX = Math.floor(centerPixelX - extentX);
+            unwrappedX <= Math.ceil(centerPixelX + extentX);
+            unwrappedX += 1
+          ) {
+            const x = ((unwrappedX % this.width) + this.width) % this.width;
+            const dx = (unwrappedX - centerPixelX) / radiusX;
+            const distance = dx * dx + dy * dy;
+            if (distance > 6.25) continue;
+            target[y * this.width + x] += Math.exp(-distance * 1.7) * amount;
+          }
+        }
+      }
+
+      #sample(x, y) {
+        const x0 = Math.floor(x);
+        const y0 = Math.floor(y);
+        const x1 = Math.min(this.width - 1, x0 + 1);
+        const y1 = Math.min(this.height - 1, y0 + 1);
+        const tx = x - x0;
+        const ty = y - y0;
+        const a = this.#field[y0 * this.width + x0];
+        const b = this.#field[y0 * this.width + x1];
+        const c = this.#field[y1 * this.width + x0];
+        const d = this.#field[y1 * this.width + x1];
+        return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+      }
+
+      #disposeGpu() {
+        const workspace = this.#workspace;
+        this.#workspace = null;
+        if (!workspace) return;
+
+        const tensors = new Set([
+          ...workspace.states,
+          workspace.warped,
+          workspace.diffused,
+          workspace.cooled,
+          workspace.heated,
+        ]);
+        for (const output of tensors) destroyTensor(output);
+      }
+    }
+
+    /* -----------------------------------------------------------------------
+     * 3. WebGL renderer
+     *
+     * WebGPU evolves the heat tensor; WebGL turns that field into a planet.
+     * Keeping simulation and presentation separate makes both paths easy to
+     * inspect and prevents pointer input from waiting on a compute readback.
+     * -------------------------------------------------------------------- */
+
+    const VERTEX_SHADER = `#version 300 es
+precision highp float;
+out vec2 vUv;
+
+void main() {
+  vec2 position = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  vUv = position * 0.5;
+  gl_Position = vec4(position * 2.0 - 1.0, 0.0, 1.0);
+}
+`;
+
+    const FRAGMENT_SHADER = `#version 300 es
+precision highp float;
+
+uniform sampler2D uHeat;
+uniform vec2 uResolution;
+uniform vec2 uMouse;
+uniform vec3 uImpactDirection;
+uniform vec3 uBrushDirection;
+uniform float uTime;
+uniform float uYaw;
+uniform float uPitch;
+uniform float uImpactAge;
+uniform float uBrushStrength;
+uniform float uCrust;
+uniform float uBloom;
+uniform float uExposure;
+uniform float uEnergy;
+
+in vec2 vUv;
+out vec4 outColor;
+
+#define PI 3.141592653589793
+#define TAU 6.283185307179586
+
+float hash11(float p) {
+  p = fract(p * 0.1031);
+  p *= p + 33.33;
+  p *= p + p;
+  return fract(p);
+}
+
+float hash21(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float hash31(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+float noise3(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash31(i + vec3(0, 0, 0)), hash31(i + vec3(1, 0, 0)), f.x),
+        mix(hash31(i + vec3(0, 1, 0)), hash31(i + vec3(1, 1, 0)), f.x), f.y),
+    mix(mix(hash31(i + vec3(0, 0, 1)), hash31(i + vec3(1, 0, 1)), f.x),
+        mix(hash31(i + vec3(0, 1, 1)), hash31(i + vec3(1, 1, 1)), f.x), f.y),
+    f.z
+  );
+}
+
+float fbm(vec3 p) {
+  float value = 0.0;
+  float amplitude = 0.5;
+  mat3 rotation = mat3(
+    0.00, 0.80, 0.60,
+   -0.80, 0.36,-0.48,
+   -0.60,-0.48, 0.64
+  );
+  for (int octave = 0; octave < 4; octave++) {
+    value += noise3(p) * amplitude;
+    p = rotation * p * 2.03 + 0.17;
+    amplitude *= 0.5;
+  }
+  return value;
+}
+
+vec3 rotateX(vec3 p, float angle) {
+  float c = cos(angle);
+  float s = sin(angle);
+  return vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
+}
+
+vec3 rotateY(vec3 p, float angle) {
+  float c = cos(angle);
+  float s = sin(angle);
+  return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+}
+
+vec2 sphereUv(vec3 normal) {
+  vec3 rotated = rotateY(rotateX(normal, uPitch), uYaw);
+  return vec2(
+    fract(atan(rotated.z, rotated.x) / TAU + 0.5),
+    asin(clamp(rotated.y, -1.0, 1.0)) / PI + 0.5
+  );
+}
+
+float heatAt(vec3 normal) {
+  vec3 rotated = rotateY(rotateX(normal, uPitch), uYaw);
+  float heat = texture(uHeat, sphereUv(normal)).r;
+  float detail = fbm(rotated * 7.0 + vec3(uTime * 0.035, -uTime * 0.024, 0.0));
+  float veins = abs(fbm(rotated * 14.0 - vec3(0.0, uTime * 0.055, 0.0)) - 0.5);
+  return clamp(heat + (detail - 0.5) * 0.17 + (0.12 - veins) * 0.2, 0.0, 1.0);
+}
+
+vec3 cameraRay(vec2 q, out vec3 origin) {
+  origin = vec3(uMouse.x * 0.16, uMouse.y * 0.1, 3.25);
+  vec3 forward = normalize(-origin);
+  vec3 right = normalize(cross(forward, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(right, forward);
+  return normalize(forward * 2.25 + right * q.x + up * q.y);
+}
+
+float sphereIntersection(vec3 ro, vec3 rd, float radius) {
+  float b = dot(ro, rd);
+  float c = dot(ro, ro) - radius * radius;
+  float h = b * b - c;
+  if (h < 0.0) return -1.0;
+  return -b - sqrt(h);
+}
+
+vec3 background(vec2 q) {
+  vec2 starGrid = q * 118.0;
+  vec2 cell = floor(starGrid);
+  vec2 local = fract(starGrid) - 0.5;
+  float starSeed = hash21(cell);
+  float star = smoothstep(0.055, 0.0, length(local)) * step(0.986, starSeed);
+  star *= 0.35 + 0.65 * sin(uTime * (0.8 + starSeed * 2.0) + starSeed * 20.0) * 0.5 + 0.5;
+
+  float cloud = fbm(vec3(q * 0.75 + vec2(uTime * 0.006, 0.0), 2.7));
+  vec3 color = vec3(0.0015, 0.0012, 0.001) + vec3(0.025, 0.006, 0.0015) * pow(cloud, 3.4);
+  color += star * vec3(0.72, 0.55, 0.4);
+
+  float radius = length(q - vec2(-0.04, 0.0));
+  float halo = exp(-max(radius - 0.72, 0.0) * 14.0) * (1.0 - smoothstep(0.72, 1.25, radius));
+  color += vec3(1.0, 0.12, 0.008) * halo * (0.045 + uBloom * 0.085);
+
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i);
+    float seed = hash11(fi * 17.31 + 2.1);
+    float phase = fract(seed + uTime * (0.025 + hash11(fi + 8.2) * 0.045));
+    vec2 ember = vec2(
+      (hash11(fi * 9.7) - 0.5) * (1.2 + phase * 1.6),
+      -0.95 + phase * 2.4
+    );
+    ember.x += sin(uTime * 0.55 + fi * 2.8) * 0.055;
+    vec2 delta = q - ember;
+    float spark = exp(-(delta.x * delta.x * 15000.0 + delta.y * delta.y * 1800.0));
+    color += spark * vec3(1.0, 0.18 + seed * 0.32, 0.01) * (0.25 + seed) * uBloom;
+  }
+  return color;
+}
+
+vec3 shadePlanet(vec3 position, vec3 rayDirection) {
+  vec3 geometricNormal = normalize(position);
+  vec3 reference = abs(geometricNormal.y) < 0.92 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 tangent = normalize(cross(reference, geometricNormal));
+  vec3 bitangent = normalize(cross(geometricNormal, tangent));
+
+  float heat = heatAt(geometricNormal);
+  float epsilon = 0.008;
+  float heatX = heatAt(normalize(geometricNormal + tangent * epsilon));
+  float heatY = heatAt(normalize(geometricNormal + bitangent * epsilon));
+  vec3 normal = normalize(
+    geometricNormal - tangent * (heatX - heat) * 5.5 - bitangent * (heatY - heat) * 5.5
+  );
+
+  float impactDistance = acos(clamp(dot(geometricNormal, uImpactDirection), -1.0, 1.0));
+  float shockRadius = uImpactAge * 0.72;
+  float shock = exp(-pow((impactDistance - shockRadius) * 21.0, 2.0)) * exp(-uImpactAge * 1.45);
+  float impactCore = exp(-impactDistance * impactDistance * 110.0) * exp(-uImpactAge * 2.1);
+  float brushMetric = 1.0 - clamp(dot(geometricNormal, uBrushDirection), -1.0, 1.0);
+  float brushCore = exp(-brushMetric * 520.0) * uBrushStrength;
+  float brushRing = exp(-pow((brushMetric - 0.0045) * 240.0, 2.0)) * uBrushStrength;
+  heat = clamp(
+    heat + shock * 0.65 + impactCore * 1.2 + brushCore * 0.95 + brushRing * 0.22,
+    0.0,
+    1.25
+  );
+
+  vec3 coldRock = vec3(0.006, 0.004, 0.003);
+  vec3 warmRock = vec3(0.055, 0.013, 0.004);
+  float rockNoise = fbm(rotateY(geometricNormal, uYaw) * 22.0);
+  vec3 rock = mix(coldRock, warmRock, rockNoise * 0.55 + heat * 0.18);
+
+  vec3 deepLava = vec3(0.9, 0.018, 0.001);
+  vec3 orangeLava = vec3(1.0, 0.19, 0.008);
+  vec3 whiteLava = vec3(1.0, 0.78, 0.19);
+  vec3 lava = mix(deepLava, orangeLava, smoothstep(0.28, 0.72, heat));
+  lava = mix(lava, whiteLava, smoothstep(0.78, 1.12, heat));
+
+  float threshold = 0.36 + uCrust * 0.28;
+  float lavaMask = smoothstep(threshold - 0.075, threshold + 0.085, heat);
+  lavaMask = max(lavaMask, shock * 0.82 + impactCore + brushCore + brushRing * 0.28);
+
+  vec3 lightDirection = normalize(vec3(-0.48, 0.72, 0.62));
+  vec3 viewDirection = -rayDirection;
+  float diffuse = max(dot(normal, lightDirection), 0.0);
+  float backLight = max(dot(normal, -lightDirection), 0.0);
+  float fresnel = pow(1.0 - max(dot(normal, viewDirection), 0.0), 3.0);
+  float specular = pow(max(dot(reflect(-lightDirection, normal), viewDirection), 0.0), 48.0);
+
+  vec3 color = rock * (0.15 + diffuse * 1.15) + warmRock * backLight * 0.1;
+  float emission = pow(clamp(heat, 0.0, 1.1), 2.3) * (1.15 + uEnergy * 1.75);
+  color = mix(color, lava * (0.72 + emission * 1.8), lavaMask);
+  color += vec3(1.0, 0.11, 0.008) * emission * lavaMask * uBloom * 0.55;
+  color += whiteLava * (brushCore * 1.25 + brushRing * 0.18) * uBloom;
+  color += vec3(1.0, 0.28, 0.035) * fresnel * (0.08 + lavaMask * 0.34);
+  color += vec3(1.0, 0.5, 0.16) * specular * (0.04 + lavaMask * 0.2);
+  return color;
+}
+
+void main() {
+  vec2 q = (gl_FragCoord.xy * 2.0 - uResolution.xy) / uResolution.y;
+  vec3 origin;
+  vec3 rayDirection = cameraRay(q, origin);
+  vec3 color = background(q);
+  float distanceToSphere = sphereIntersection(origin, rayDirection, 1.0);
+
+  if (distanceToSphere > 0.0) {
+    vec3 position = origin + rayDirection * distanceToSphere;
+    color = shadePlanet(position, rayDirection);
+
+    float facing = max(dot(normalize(position), -rayDirection), 0.0);
+    float limb = pow(1.0 - facing, 4.5);
+    color += vec3(1.0, 0.075, 0.003) * limb * uBloom * 0.26;
+  }
+
+  float flare = exp(-length(q - vec2(-0.58, 0.46)) * 5.5) * 0.018;
+  color += vec3(1.0, 0.18, 0.015) * flare * uBloom;
+
+  color *= uExposure;
+  color = 1.0 - exp(-color);
+  color = pow(color, vec3(0.4545));
+
+  float vignette = 1.0 - smoothstep(0.35, 1.45, length(q * vec2(0.72, 1.0)));
+  color *= 0.48 + vignette * 0.52;
+  float grain = hash21(gl_FragCoord.xy + fract(uTime) * 8192.0) - 0.5;
+  color += grain * 0.011;
+
+  outColor = vec4(max(color, 0.0), 1.0);
+}
+`;
+
+    function compileShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      if (!shader) throw new Error("Could not allocate a WebGL shader");
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const message = gl.getShaderInfoLog(shader) ?? "Unknown shader compilation error";
+        gl.deleteShader(shader);
+        throw new Error(message);
+      }
+      return shader;
+    }
+
+    function createProgram(gl) {
+      const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
+      const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+      const program = gl.createProgram();
+      if (!program) throw new Error("Could not allocate a WebGL program");
+      gl.attachShader(program, vertex);
+      gl.attachShader(program, fragment);
+      gl.linkProgram(program);
+      gl.deleteShader(vertex);
+      gl.deleteShader(fragment);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const message = gl.getProgramInfoLog(program) ?? "Unknown shader link error";
+        gl.deleteProgram(program);
+        throw new Error(message);
+      }
+      return program;
+    }
+
+    function normalize(vector) {
+      const length = Math.hypot(vector[0], vector[1], vector[2]) || 1;
+      return [vector[0] / length, vector[1] / length, vector[2] / length];
+    }
+
+    function cross(a, b) {
+      return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+      ];
+    }
+
+    function addScaled(a, b, scale) {
+      return [a[0] + b[0] * scale, a[1] + b[1] * scale, a[2] + b[2] * scale];
+    }
+
+    function rotateX(vector, angle) {
+      const cosine = Math.cos(angle);
+      const sine = Math.sin(angle);
+      return [
+        vector[0],
+        cosine * vector[1] - sine * vector[2],
+        sine * vector[1] + cosine * vector[2],
+      ];
+    }
+
+    function rotateY(vector, angle) {
+      const cosine = Math.cos(angle);
+      const sine = Math.sin(angle);
+      return [
+        cosine * vector[0] + sine * vector[2],
+        vector[1],
+        -sine * vector[0] + cosine * vector[2],
+      ];
+    }
+
+    class MoltenRenderer {
+      #canvas;
+      #gl;
+      #program;
+      #texture;
+      #vao;
+      #uniforms;
+      #fieldWidth;
+      #fieldHeight;
+      #mouseTarget = [0, 0];
+      #mouse = [0, 0];
+      #impactDirection = [0, 0, 1];
+      #brushDirection = [0, 0, 1];
+      #brushStrength = 0;
+      #brushTargetStrength = 0;
+      #impactAt = -100;
+      #yaw = 0;
+      #pitch = -0.18;
+      #lastRenderAt = performance.now();
+      #disposed = false;
+
+      constructor(canvas, fieldWidth, fieldHeight) {
+        this.#canvas = canvas;
+        this.#fieldWidth = fieldWidth;
+        this.#fieldHeight = fieldHeight;
+
+        const gl = canvas.getContext("webgl2", {
+          alpha: false,
+          antialias: false,
+          depth: false,
+          stencil: false,
+          powerPreference: "high-performance",
+          preserveDrawingBuffer: false,
+        });
+        if (!gl) throw new Error("WebGL 2 is unavailable");
+        this.#gl = gl;
+        this.#program = createProgram(gl);
+
+        const vao = gl.createVertexArray();
+        const texture = gl.createTexture();
+        if (!vao || !texture) throw new Error("Could not allocate renderer resources");
+        this.#vao = vao;
+        this.#texture = texture;
+
+        const names = [
+          "uHeat", "uResolution", "uMouse", "uImpactDirection",
+          "uBrushDirection", "uTime", "uYaw", "uPitch", "uImpactAge",
+          "uBrushStrength", "uCrust", "uBloom", "uExposure", "uEnergy",
+        ];
+        this.#uniforms = Object.fromEntries(names.map((name) => {
+          const location = gl.getUniformLocation(this.#program, name);
+          if (location === null) throw new Error(`Missing shader uniform ${name}`);
+          return [name, location];
+        }));
+
+        gl.useProgram(this.#program);
+        gl.bindVertexArray(this.#vao);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.#texture);
+        const linearFloat = gl.getExtension("OES_texture_float_linear");
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, linearFloat ? gl.LINEAR : gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, linearFloat ? gl.LINEAR : gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(
+          gl.TEXTURE_2D,
+          0,
+          gl.R32F,
+          fieldWidth,
+          fieldHeight,
+          0,
+          gl.RED,
+          gl.FLOAT,
+          null,
+        );
+        gl.uniform1i(this.#uniforms.uHeat, 0);
+        gl.disable(gl.DEPTH_TEST);
+        gl.disable(gl.BLEND);
+      }
+
+      resize(maxPixelRatio = 1.6) {
+        if (this.#disposed) return;
+        const ratio = Math.min(devicePixelRatio || 1, maxPixelRatio);
+        const width = Math.max(1, Math.round(this.#canvas.clientWidth * ratio));
+        const height = Math.max(1, Math.round(this.#canvas.clientHeight * ratio));
+        if (this.#canvas.width === width && this.#canvas.height === height) return;
+        this.#canvas.width = width;
+        this.#canvas.height = height;
+        this.#gl.viewport(0, 0, width, height);
+      }
+
+      uploadField(field) {
+        if (this.#disposed) return;
+        const gl = this.#gl;
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.#texture);
+        gl.texSubImage2D(
+          gl.TEXTURE_2D,
+          0,
+          0,
+          0,
+          this.#fieldWidth,
+          this.#fieldHeight,
+          gl.RED,
+          gl.FLOAT,
+          field,
+        );
+      }
+
+      setPointer(x, y) {
+        this.#mouseTarget = [(x * 2 - 1) * 0.78, (1 - y * 2) * 0.62];
+      }
+
+      render(time, parameters) {
+        if (this.#disposed) return;
+        const gl = this.#gl;
+        const now = performance.now();
+        const delta = Math.min((now - this.#lastRenderAt) / 1000, 0.05);
+        this.#lastRenderAt = now;
+
+        // Time-based easing behaves identically at 60 Hz and 240 Hz.
+        const mouseAlpha = 1 - Math.exp(-delta * 3.2);
+        this.#mouse[0] += (this.#mouseTarget[0] - this.#mouse[0]) * mouseAlpha;
+        this.#mouse[1] += (this.#mouseTarget[1] - this.#mouse[1]) * mouseAlpha;
+        const strengthRate = this.#brushTargetStrength > this.#brushStrength ? 60 : 10;
+        this.#brushStrength +=
+          (this.#brushTargetStrength - this.#brushStrength) *
+          (1 - Math.exp(-delta * strengthRate));
+        this.#yaw = time * (0.045 + parameters.orbit * 0.13);
+        this.#pitch = -0.18 + Math.sin(time * 0.08) * 0.055;
+
+        gl.useProgram(this.#program);
+        gl.bindVertexArray(this.#vao);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this.#texture);
+        gl.uniform2f(this.#uniforms.uResolution, this.#canvas.width, this.#canvas.height);
+        gl.uniform2f(this.#uniforms.uMouse, this.#mouse[0], this.#mouse[1]);
+        gl.uniform3fv(this.#uniforms.uImpactDirection, this.#impactDirection);
+        gl.uniform3fv(this.#uniforms.uBrushDirection, this.#brushDirection);
+        gl.uniform1f(this.#uniforms.uTime, time);
+        gl.uniform1f(this.#uniforms.uYaw, this.#yaw);
+        gl.uniform1f(this.#uniforms.uPitch, this.#pitch);
+        gl.uniform1f(this.#uniforms.uImpactAge, Math.max(0, time - this.#impactAt));
+        gl.uniform1f(this.#uniforms.uBrushStrength, this.#brushStrength);
+        gl.uniform1f(this.#uniforms.uCrust, parameters.crust);
+        gl.uniform1f(this.#uniforms.uBloom, 0.5 + parameters.bloom * 1.3);
+        gl.uniform1f(this.#uniforms.uExposure, 0.72 + parameters.exposure * 1.05);
+        gl.uniform1f(this.#uniforms.uEnergy, parameters.energy);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+
+      /** Convert a screen coordinate into the rendered sphere's UV and normal. */
+      pick(x, y) {
+        const aspect = this.#canvas.width / Math.max(1, this.#canvas.height);
+        const qx = (x * 2 - 1) * aspect;
+        const qy = 1 - y * 2;
+        const origin = [this.#mouse[0] * 0.16, this.#mouse[1] * 0.1, 3.25];
+        const forward = normalize([-origin[0], -origin[1], -origin[2]]);
+        const right = normalize(cross(forward, [0, 1, 0]));
+        const up = cross(right, forward);
+        let direction = addScaled(forward, right, qx / 2.25);
+        direction = normalize(addScaled(direction, up, qy / 2.25));
+
+        const b = origin[0] * direction[0] + origin[1] * direction[1] + origin[2] * direction[2];
+        const c = origin[0] ** 2 + origin[1] ** 2 + origin[2] ** 2 - 1;
+        const discriminant = b * b - c;
+        if (discriminant < 0) return null;
+        const distance = -b - Math.sqrt(discriminant);
+        if (distance <= 0) return null;
+
+        const surface = normalize([
+          origin[0] + direction[0] * distance,
+          origin[1] + direction[1] * distance,
+          origin[2] + direction[2] * distance,
+        ]);
+        const rotated = rotateY(rotateX(surface, this.#pitch), this.#yaw);
+        const u = ((Math.atan2(rotated[2], rotated[0]) / (Math.PI * 2) + 0.5) % 1 + 1) % 1;
+        const v = Math.asin(clamp(rotated[1], -1, 1)) / Math.PI + 0.5;
+        return { u, v, direction: surface };
+      }
+
+      triggerImpact(direction, time) {
+        this.#impactDirection = direction;
+        this.#impactAt = time;
+      }
+
+      setBrush(direction) {
+        if (direction) {
+          // Immediate direction updates are the zero-lag visual pointer path.
+          this.#brushDirection = normalize(direction);
+          this.#brushTargetStrength = 1;
+        } else {
+          this.#brushTargetStrength = 0;
+        }
+      }
+
+      dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        const gl = this.#gl;
+        gl.deleteTexture(this.#texture);
+        gl.deleteVertexArray(this.#vao);
+        gl.deleteProgram(this.#program);
+      }
+    }
+
+    /* -----------------------------------------------------------------------
+     * 4. Application and interaction loop
+     *
+     * Rendering runs every requestAnimationFrame. Compute is adaptive and never
+     * overlaps itself. Pointer feedback updates immediately; expensive heat-field
+     * injection is sampled independently, which keeps dragging responsive even on
+     * 240 Hz displays while kernels are compiling or a readback is in flight.
+     * -------------------------------------------------------------------- */
+
+    const DEFAULT_PARAMETERS = Object.freeze({
+      turbulence: 0.67,
+      cooling: 0.44,
+      viscosity: 0.58,
+      eruption: 0.66,
+      crust: 0.52,
+      bloom: 0.72,
+      exposure: 0.58,
+      orbit: 0.48,
+    });
+
+    function requireElement(selector, root = document) {
+      const element = root.querySelector(selector);
+      if (!element) throw new Error(`Missing interface element: ${selector}`);
+      return element;
+    }
+
+    class MoltenApp {
+      #root;
+      #canvas;
+      #simulation;
+      #renderer;
+      #resizeObserver;
+      #abortController = new AbortController();
+      #parameters = { ...DEFAULT_PARAMETERS };
+      #paused = false;
+      #settingsExpanded = false;
+      #dragging = false;
+      #disposed = false;
+      #animationFrame = 0;
+      #inFlight = false;
+      #computeTask = null;
+      #gpuFailed = !supportsWebGpu();
+      #gpuReady = false;
+      #pendingAction = null;
+      #lastFrame = performance.now();
+      #lastCompute = 0;
+      #lastInjection = 0;
+      #lastImpact = 0;
+      #statsStarted = performance.now();
+      #frames = 0;
+      #computeMs = 0;
+
+      #ui;
+
+      constructor(root) {
+        this.#root = root;
+        this.#canvas = requireElement("#molten-canvas", root);
+        this.#simulation = new MoltenSimulation();
+
+        try {
+          this.#renderer = new MoltenRenderer(
+            this.#canvas,
+            this.#simulation.width,
+            this.#simulation.height,
+          );
+        } catch (error) {
+          this.#simulation.dispose();
+          throw error;
+        }
+
+        this.#ui = {
+          runtime: requireElement("#runtime-pill", root),
+          backend: requireElement("#backend-label", root),
+          fps: requireElement("#fps-output", root),
+          compute: requireElement("#compute-output", root),
+          statusDot: requireElement("#status-dot", root),
+          residency: requireElement("#residency-label", root),
+          controls: requireElement("#controls-panel", root),
+          settings: requireElement("#settings-button", root),
+          settingsBody: requireElement("#simulation-settings", root),
+          pause: requireElement("#pause-button", root),
+          reset: requireElement("#reset-button", root),
+          random: requireElement("#random-button", root),
+          fullscreen: requireElement("#fullscreen-button", root),
+        };
+      }
+
+      start() {
+        this.#renderer.uploadField(this.#simulation.field);
+        this.#renderer.resize();
+        this.#bindInterface();
+
+        this.#resizeObserver = new ResizeObserver(() => this.#renderer.resize());
+        this.#resizeObserver.observe(this.#canvas);
+
+        this.#setBackend(
+          this.#gpuFailed
+            ? { kind: "cpu", label: "CPU fallback" }
+            : { kind: "checking", label: "WebGPU detected" },
+        );
+
+        this.#animationFrame = requestAnimationFrame(this.#frame);
+      }
+
+      #bindInterface() {
+        const signal = this.#abortController.signal;
+
+        for (const input of this.#root.querySelectorAll("[data-parameter]")) {
+          input.addEventListener("input", () => {
+            const key = input.dataset.parameter;
+            const value = Number(input.value);
+            this.#parameters[key] = value;
+            input.style.setProperty("--fill", `${Math.round(value * 100)}%`);
+            const output = input.closest("label")?.querySelector("output");
+            if (output) output.value = String(Math.round(value * 100));
+          }, { signal });
+        }
+
+        this.#ui.pause.addEventListener("click", () => this.#togglePause(), { signal });
+        this.#ui.reset.addEventListener("click", () => this.#queueAction("reset"), { signal });
+        this.#ui.random.addEventListener("click", () => this.#queueAction("randomize"), { signal });
+        this.#ui.fullscreen.addEventListener("click", () => void this.#toggleFullscreen(), { signal });
+        this.#ui.settings.addEventListener("click", () => this.#toggleSettings(), { signal });
+
+        document.addEventListener("fullscreenchange", () => this.#updateFullscreenButton(), { signal });
+        window.addEventListener("pagehide", (event) => {
+          if (!event.persisted) void this.dispose();
+        }, { signal });
+
+        this.#canvas.addEventListener("pointerdown", (event) => {
+          this.#dragging = true;
+          this.#lastInjection = 0;
+          this.#lastImpact = 0;
+          try { this.#canvas.setPointerCapture(event.pointerId); } catch { /* optional */ }
+          this.#updatePointer(event, true);
+        }, { signal });
+
+        this.#canvas.addEventListener("pointermove", (event) => {
+          // The final coalesced sample is the freshest physical pointer position.
+          const samples = event.getCoalescedEvents?.() ?? [];
+          const latest = samples.at(-1) ?? event;
+          this.#updatePointer(latest, this.#dragging);
+        }, { signal });
+
+        const endPointer = (event) => {
+          this.#dragging = false;
+          this.#renderer.setBrush(null);
+          if (this.#canvas.hasPointerCapture?.(event.pointerId)) {
+            try { this.#canvas.releasePointerCapture(event.pointerId); } catch { /* optional */ }
+          }
+        };
+        this.#canvas.addEventListener("pointerup", endPointer, { signal });
+        this.#canvas.addEventListener("pointercancel", endPointer, { signal });
+        this.#canvas.addEventListener("lostpointercapture", () => {
+          this.#dragging = false;
+          this.#renderer.setBrush(null);
+        }, { signal });
+
+        this.#canvas.addEventListener("pointerleave", () => {
+          if (this.#dragging) return;
+          this.#renderer.setPointer(0.5, 0.5);
+          this.#renderer.setBrush(null);
+        }, { signal });
+
+        this.#canvas.addEventListener("keydown", (event) => {
+          if (event.code !== "Space") return;
+          event.preventDefault();
+          this.#togglePause();
+        }, { signal });
+
+        this.#canvas.addEventListener("webglcontextlost", (event) => {
+          event.preventDefault();
+          this.#showFatal("The WebGL rendering context was lost. Reload the page to restart the demo.");
+          void this.dispose();
+        }, { signal });
+      }
+
+      #pointFromEvent(event) {
+        const bounds = this.#canvas.getBoundingClientRect();
+        return {
+          x: clamp((event.clientX - bounds.left) / bounds.width),
+          y: clamp((event.clientY - bounds.top) / bounds.height),
+        };
+      }
+
+      #updatePointer(event, inject) {
+        const point = this.#pointFromEvent(event);
+        this.#renderer.setPointer(point.x, point.y);
+        if (!inject) return;
+
+        const hit = this.#renderer.pick(point.x, point.y);
+        if (!hit) {
+          this.#renderer.setBrush(null);
+          return;
+        }
+
+        // This visual path is immediate and never waits for WebGPU.
+        this.#renderer.setBrush(hit.direction);
+
+        const now = performance.now();
+        if (now - this.#lastImpact >= 84) {
+          this.#lastImpact = now;
+          this.#renderer.triggerImpact(hit.direction, this.#simulation.time);
+        }
+
+        // The state path is sampled to avoid flooding the next compute iteration.
+        if (now - this.#lastInjection < 12) return;
+        this.#lastInjection = now;
+        const pressure = event.pressure > 0 ? event.pressure : 0.72;
+        this.#simulation.inject(
+          hit.u,
+          hit.v,
+          0.75 + pressure * 1.15,
+          0.048 + pressure * 0.025,
+        );
+      }
+
+      #frame = (now) => {
+        if (this.#disposed) return;
+        const delta = Math.min((now - this.#lastFrame) / 1000, 0.05);
+        this.#lastFrame = now;
+
+        if (!this.#paused) {
+          this.#simulation.advance(delta, this.#parameters.orbit);
+
+          const updateInterval = this.#gpuFailed
+            ? 64
+            : this.#gpuReady
+              ? clamp(this.#computeMs * 1.35 + 16, 24, 44)
+              : 48;
+
+          if (!this.#inFlight && now - this.#lastCompute >= updateInterval) {
+            this.#lastCompute = now;
+            this.#scheduleCompute();
+          }
+        }
+
+        this.#renderer.render(this.#simulation.time, {
+          crust: this.#parameters.crust,
+          bloom: this.#parameters.bloom,
+          exposure: this.#parameters.exposure,
+          orbit: this.#parameters.orbit,
+          energy: this.#parameters.eruption,
+        });
+
+        this.#frames += 1;
+        if (now - this.#statsStarted >= 1000) this.#publishStats(now);
+        this.#animationFrame = requestAnimationFrame(this.#frame);
+      };
+
+      #scheduleCompute() {
+        if (this.#computeTask) return;
+        const task = Promise.resolve().then(() => this.#compute());
+        this.#computeTask = task;
+        void task
+          .catch((error) => {
+            if (!this.#disposed) console.error("Simulation update failed.", error);
+          })
+          .finally(() => {
+            if (this.#computeTask === task) this.#computeTask = null;
+          });
+      }
+
+      async #compute() {
+        if (this.#disposed || this.#inFlight) return;
+        this.#inFlight = true;
+        const started = performance.now();
+        const parameters = { ...this.#parameters };
+
+        try {
+          if (!this.#gpuFailed) {
+            await this.#simulation.stepGpu(parameters);
+            if (this.#disposed) return;
+            this.#gpuReady = true;
+          } else {
+            this.#simulation.stepCpu(parameters);
+          }
+
+          this.#renderer.uploadField(this.#simulation.field);
+          this.#computeMs = performance.now() - started;
+        } catch (error) {
+          if (this.#disposed) return;
+          console.warn("WebGPU kernel path failed; switching to CPU fallback.", error);
+          this.#gpuFailed = true;
+          this.#gpuReady = false;
+          this.#simulation.releaseGpu();
+          this.#simulation.stepCpu(parameters);
+          this.#renderer.uploadField(this.#simulation.field);
+          this.#computeMs = performance.now() - started;
+        } finally {
+          this.#inFlight = false;
+          if (!this.#disposed && this.#pendingAction) {
+            const action = this.#pendingAction;
+            this.#pendingAction = null;
+            this.#applyAction(action);
+          }
+        }
+      }
+
+      #publishStats(now) {
+        const elapsed = now - this.#statsStarted;
+        const fps = Math.round((this.#frames * 1000) / elapsed);
+
+        this.#ui.fps.value = `${fps} FPS`;
+        this.#ui.compute.value = this.#computeMs ? `${this.#computeMs.toFixed(1)} ms` : "warming";
+        this.#setBackend(this.#backendState());
+
+        this.#frames = 0;
+        this.#statsStarted = now;
+      }
+
+      #backendState() {
+        if (this.#gpuFailed) return { kind: "cpu", label: "CPU fallback" };
+        if (!this.#gpuReady) return { kind: "loading", label: "Compiling kernels" };
+        return { kind: "gpu", label: "WebGPU resident" };
+      }
+
+      #setBackend({ kind, label }) {
+        this.#ui.runtime.className = `runtime-pill runtime-${kind}`;
+        this.#ui.backend.textContent = label;
+        this.#ui.statusDot.className = `status-dot status-${kind}`;
+        this.#ui.residency.textContent =
+          kind === "gpu" ? "State stays on GPU" :
+          kind === "cpu" ? "Stable CPU fallback active" :
+          "GPU path activates automatically";
+      }
+
+      #queueAction(action) {
+        if (this.#inFlight) this.#pendingAction = action;
+        else this.#applyAction(action);
+      }
+
+      #applyAction(action) {
+        if (action === "reset") this.#simulation.reset();
+        else this.#simulation.randomize();
+        this.#renderer.uploadField(this.#simulation.field);
+      }
+
+      #togglePause() {
+        this.#paused = !this.#paused;
+        this.#ui.pause.setAttribute("aria-pressed", String(this.#paused));
+        this.#ui.pause.setAttribute("aria-label", this.#paused ? "Resume simulation" : "Pause simulation");
+        this.#ui.pause.title = this.#paused ? "Resume simulation" : "Pause simulation";
+        this.#ui.pause.querySelector('[data-icon="pause"]').hidden = this.#paused;
+        this.#ui.pause.querySelector('[data-icon="play"]').hidden = !this.#paused;
+      }
+
+      #toggleSettings() {
+        this.#settingsExpanded = !this.#settingsExpanded;
+        this.#ui.controls.classList.toggle("is-collapsed", !this.#settingsExpanded);
+        this.#ui.settings.setAttribute("aria-expanded", String(this.#settingsExpanded));
+        this.#ui.settings.setAttribute(
+          "aria-label",
+          this.#settingsExpanded ? "Collapse simulation settings" : "Expand simulation settings",
+        );
+        this.#ui.settings.title =
+          this.#settingsExpanded ? "Collapse simulation settings" : "Expand simulation settings";
+        this.#ui.settingsBody.setAttribute("aria-hidden", String(!this.#settingsExpanded));
+        this.#ui.settingsBody.inert = !this.#settingsExpanded;
+        this.#ui.settings.querySelector('[data-icon="expand-settings"]').hidden = this.#settingsExpanded;
+        this.#ui.settings.querySelector('[data-icon="collapse-settings"]').hidden = !this.#settingsExpanded;
+      }
+
+      async #toggleFullscreen() {
+        try {
+          if (document.fullscreenElement) await document.exitFullscreen();
+          else await this.#root.requestFullscreen();
+        } catch {
+          // Embedding documents are allowed to deny fullscreen.
+        }
+      }
+
+      #updateFullscreenButton() {
+        const active = document.fullscreenElement === this.#root;
+        this.#ui.fullscreen.setAttribute("aria-label", active ? "Exit fullscreen" : "Enter fullscreen");
+        this.#ui.fullscreen.title = active ? "Exit fullscreen" : "Enter fullscreen";
+        this.#ui.fullscreen.querySelector('[data-icon="maximize"]').hidden = active;
+        this.#ui.fullscreen.querySelector('[data-icon="minimize"]').hidden = !active;
+      }
+
+      #showFatal(message) {
+        const panel = requireElement("#fatal-message", this.#root);
+        requireElement("#fatal-copy", panel).textContent = message;
+        panel.hidden = false;
+      }
+
+      async dispose() {
+        if (this.#disposed) return;
+        this.#disposed = true;
+        cancelAnimationFrame(this.#animationFrame);
+        this.#abortController.abort();
+        this.#resizeObserver?.disconnect();
+
+        // Let a submitted dispatch settle before destroying its resident buffers.
+        const pendingCompute = this.#computeTask;
+        if (pendingCompute) await pendingCompute.catch(() => {});
+
+        this.#simulation.dispose();
+        this.#renderer.dispose();
+        await shutdownKernelRuntime();
+      }
+    }
+
+    /* -----------------------------------------------------------------------
+     * 5. Start
+     * -------------------------------------------------------------------- */
+
+    try {
+      const app = new MoltenApp(requireElement("#app"));
+      app.start();
+    } catch (error) {
+      console.error(error);
+      const panel = requireElement("#fatal-message");
+      const copy = requireElement("#fatal-copy", panel);
+      copy.textContent = error instanceof Error ? error.message : String(error);
+      panel.hidden = false;
+    }
+  </script>
+</body>
+</html>

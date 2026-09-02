@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "react-spa": {
+      "source": "nico-martin/skills",
+      "sourceType": "github",
+      "skillPath": "react-spa/SKILL.md",
+      "computedHash": "8f3226119c8e3fa4f9f4c746c07dfe415ba7efb2d81a2912868f10ff53e4d50e"
+    },
+    "transformers-js": {
+      "source": "huggingface/skills",
+      "sourceType": "github",
+      "skillPath": "skills/transformers-js/SKILL.md",
+      "computedHash": "f61c531d0cc9ee4cb714b5a651f4a7a939ce127f70333d44af179cbbb1663de1"
+    }
+  }
+}
