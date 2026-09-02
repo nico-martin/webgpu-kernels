@@ -47,12 +47,12 @@ jobs:
           ---
           title: WebGPU Kernels Playground
           emoji: ⚡
-          colorFrom: orange
+          colorFrom: red
           colorTo: yellow
           sdk: static
           pinned: false
           license: apache-2.0
-          short_description: Interactive WebGPU kernel demos running entirely in your browser
+          short_description: Interactive WebGPU kernels running locally in your browser
           ---
 
           > **Contributing:** This Space is deployed from the [GitHub repository](https://github.com/${{ github.repository }}). Please open issues and pull requests there.
