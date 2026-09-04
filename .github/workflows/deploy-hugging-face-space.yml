@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  HF_SPACE: webgpu-kernels/kernel-playground
+  HF_SPACE: nico-martin/webgpu-kernels
 
 jobs:
   build-and-deploy:
