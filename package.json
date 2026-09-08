@@ -11,7 +11,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\""
   },
   "dependencies": {
-    "@huggingface/kernels": "0.0.1-preview.1",
+    "@huggingface/kernels": "0.0.1-preview.2",
     "@huggingface/transformers": "latest",
     "lucide-react": "latest",
     "prismjs": "^1.30.0",
