@@ -29,11 +29,7 @@ export default function App() {
             href="#top"
             className="flex items-center gap-2.5 font-semibold tracking-tight"
           >
-            <img
-              src="/huggingface-logo.svg"
-              alt="Hugging Face"
-              className="h-8 w-auto"
-            />
+            <img src="/huggingface-logo.svg" alt="Hugging Face" className="h-8 w-auto" />
             <span className="hidden sm:inline">WebGPU Kernels</span>
           </a>
           <div className="flex items-center gap-5 font-mono text-[11px] uppercase tracking-[0.12em] text-white/65">
@@ -131,20 +127,36 @@ export default function App() {
       </section>
 
       <footer className="bg-ink py-10 text-white">
-        <div className="page-wrap flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-          <div className="font-semibold">@huggingface/kernels</div>
-          <p className="font-mono text-xs uppercase tracking-widest text-white/45">
-            The first layer in making browser inference as fast as physically possible ·
-            by{" "}
+        <div className="page-wrap grid gap-8 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div>
+            <div className="font-semibold">@huggingface/kernels</div>
+            <p className="mt-2 max-w-md text-sm leading-6 text-white/45">
+              The first layer in making browser inference
+              <br />
+              as fast as physically possible.
+            </p>
+          </div>
+          <nav
+            aria-label="Footer links"
+            className="flex flex-col items-start gap-3 font-mono text-xs uppercase tracking-widest lg:items-end"
+          >
             <a
               href="https://huggingface.co/docs/transformers.js/en/index"
               target="_blank"
               rel="noreferrer"
-              className="text-white/70 underline decoration-white/25 underline-offset-4 transition hover:text-white"
+              className="flex items-center gap-1 text-white/55 transition hover:text-white"
             >
-              Transformers.js
+              Built by Transformers.js <ArrowUpRight size={12} />
             </a>
-          </p>
+            <a
+              href="https://github.com/nico-martin/webgpu-kernels"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 text-white/55 transition hover:text-white"
+            >
+              Website source <ArrowUpRight size={12} />
+            </a>
+          </nav>
         </div>
       </footer>
     </main>
