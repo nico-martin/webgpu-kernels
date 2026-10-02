@@ -1,6 +1,7 @@
-import { getKernel } from "@huggingface/kernels";
 import { MousePointer2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+
+import { loadKernel } from "../utils/kernels";
 
 const FIELD_WIDTH = 128;
 const FIELD_HEIGHT = 64;
@@ -40,13 +41,11 @@ class CpuHeatRunner implements HeatRunner {
 }
 
 class GpuHeatRunner implements HeatRunner {
-  private constructor(private readonly matmul: Awaited<ReturnType<typeof getKernel>>) {}
+  private constructor(private readonly matmul: Awaited<ReturnType<typeof loadKernel>>) {}
 
   static async create(): Promise<GpuHeatRunner> {
     if (!("gpu" in navigator)) throw new Error("WebGPU unavailable");
-    return new GpuHeatRunner(
-      await getKernel("webgpu-kernels/ai.onnx.MatMul", { version: 1 })
-    );
+    return new GpuHeatRunner(await loadKernel("ai.onnx.MatMul"));
   }
 
   async frame(rows: Float32Array, columns: Float32Array): Promise<Float32Array> {

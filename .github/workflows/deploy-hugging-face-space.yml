@@ -39,7 +39,12 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
+        env:
+          VITE_BUNDLE_HUB_ASSETS: "true"
         run: pnpm run build
+
+      - name: Bundle Hugging Face assets
+        run: pnpm run bundle:space-assets
 
       - name: Write Hugging Face Space metadata
         run: |
@@ -79,6 +84,7 @@ jobs:
           rsync --archive --delete --exclude=.git dist/ hf-space/
 
           git -C hf-space lfs track "*.wasm"
+          git -C hf-space lfs track "*.safetensors"
           git -C hf-space add -A
 
           if git -C hf-space diff --cached --quiet; then

@@ -1,5 +1,6 @@
-import { getKernel } from "@huggingface/kernels";
 import type { KernelGpuTensor } from "@huggingface/kernels";
+
+import { loadKernel } from "./kernels";
 
 export const FIELD_SIZE = 1024;
 export const FIELD_CHANNELS = 128;
@@ -48,7 +49,7 @@ function firstGpuTensor(result: Record<string, KernelGpuTensor>): KernelGpuTenso
 
 export class GpuWaveRunner implements WaveRunner {
   private constructor(
-    private readonly matmul: Awaited<ReturnType<typeof getKernel>>,
+    private readonly matmul: Awaited<ReturnType<typeof loadKernel>>,
     private readonly basis: KernelGpuTensor,
     private readonly signals: Float32Array
   ) {}
@@ -57,8 +58,8 @@ export class GpuWaveRunner implements WaveRunner {
     if (!("gpu" in navigator))
       throw new Error("WebGPU is not available in this browser.");
     const [add, matmul] = await Promise.all([
-      getKernel("webgpu-kernels/ai.onnx.Add", { version: 1 }),
-      getKernel("webgpu-kernels/ai.onnx.MatMul", { version: 1 }),
+      loadKernel("ai.onnx.Add"),
+      loadKernel("ai.onnx.MatMul"),
     ]);
     const basis = firstGpuTensor(
       await add(

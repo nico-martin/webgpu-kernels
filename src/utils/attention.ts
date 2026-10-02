@@ -1,10 +1,15 @@
-import { getKernel } from "@huggingface/kernels";
 import type { KernelGpuTensor } from "@huggingface/kernels";
-import { AutoTokenizer } from "@huggingface/transformers";
+import { AutoTokenizer, env } from "@huggingface/transformers";
+
+import { loadKernel } from "./kernels";
 
 const MODEL_ID = "google/bert_uncased_L-2_H-128_A-2";
 const TOKENIZER_ID = "Xenova/bert-base-uncased";
-const MODEL_URL = `https://huggingface.co/${MODEL_ID}/resolve/main/model.safetensors`;
+const USE_BUNDLED_HUB_ASSETS = import.meta.env.VITE_BUNDLE_HUB_ASSETS === "true";
+const HUB_ASSET_ROOT = new URL(`${import.meta.env.BASE_URL}hub/`, window.location.origin).href;
+const MODEL_URL = USE_BUNDLED_HUB_ASSETS
+  ? `${HUB_ASSET_ROOT}${MODEL_ID}/model.safetensors`
+  : `https://huggingface.co/${MODEL_ID}/resolve/main/model.safetensors`;
 const HIDDEN_SIZE = 128;
 const HEAD_SIZE = 64;
 const MAX_TOKENS = 12;
@@ -31,6 +36,11 @@ export interface AttentionResult {
 
 let weightsPromise: Promise<SafeTensors> | null = null;
 let tokenizerPromise: ReturnType<typeof AutoTokenizer.from_pretrained> | null = null;
+
+if (USE_BUNDLED_HUB_ASSETS) {
+  env.remoteHost = HUB_ASSET_ROOT;
+  env.remotePathTemplate = "{model}/";
+}
 
 async function loadWeights(onProgress: (message: string) => void): Promise<SafeTensors> {
   if (!weightsPromise) {
@@ -88,7 +98,7 @@ function firstGpu(result: Record<string, KernelGpuTensor>): KernelGpuTensor {
   return value;
 }
 
-function cpuData(result: Awaited<ReturnType<Awaited<ReturnType<typeof getKernel>>>>) {
+function cpuData(result: Awaited<ReturnType<Awaited<ReturnType<typeof loadKernel>>>>) {
   const value = Object.values(result)[0];
   if (!value || !("data" in value) || !(value.data instanceof Float32Array)) {
     throw new Error("Kernel returned no float32 tensor.");
@@ -107,10 +117,10 @@ export async function runAttention(
     loadWeights(onProgress),
     (tokenizerPromise ??= AutoTokenizer.from_pretrained(TOKENIZER_ID)),
     Promise.all([
-      getKernel("webgpu-kernels/ai.onnx.MatMul", { version: 1 }),
-      getKernel("webgpu-kernels/ai.onnx.Softmax", { version: 1 }),
-      getKernel("webgpu-kernels/ai.onnx.LayerNormalization", { version: 1 }),
-      getKernel("webgpu-kernels/ai.onnx.Add", { version: 1 }),
+      loadKernel("ai.onnx.MatMul"),
+      loadKernel("ai.onnx.Softmax"),
+      loadKernel("ai.onnx.LayerNormalization"),
+      loadKernel("ai.onnx.Add"),
     ]),
   ]);
   const [matmul, softmax, layerNorm, add] = kernels;
